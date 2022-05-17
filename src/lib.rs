@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::collections::VecDeque;
+
 
 #[allow(dead_code)]
 const DEBUG: bool = false;
-
-
 
 #[derive(Debug, PartialEq)]
 enum JsonData {
@@ -37,7 +35,7 @@ enum JsonType {
 pub struct Lexer {
     cursor: usize,
     input: Vec<char>,
-    enclosing_queue: VecDeque<char>,
+    enclosing_stack: Vec<char>,
 }
 
 impl Lexer {
@@ -45,7 +43,7 @@ impl Lexer {
         Self {
             cursor: 0,
             input: json.trim().chars().collect(),
-            enclosing_queue: VecDeque::new(),
+            enclosing_stack: Vec::new(),
         }
     }
 
@@ -63,8 +61,8 @@ impl Lexer {
             println!("{:?}", root.as_ref().unwrap());
             println!("-------------");
         }
-        assert!(self.enclosing_queue.is_empty(), "queue is not empty");
-        assert!(self.is_empty(), "{:?}", self.dump_to_string());
+        assert!(self.enclosing_stack.is_empty(), "Mismatched enclosings");
+        assert!(self.is_empty(), "Parsing is done, but there is still input left to read.");
         root.unwrap()
     }
 
@@ -275,14 +273,14 @@ impl Lexer {
             '[' => ']',
             c => panic!("Unknown opening bracket: `{c}`"),
         };
-        self.enclosing_queue.push_back(item);
+        self.enclosing_stack.push(item);
         self.cursor += 1;
     }
 
     fn pop_closing(&mut self) {
-        if let Some(back) = self.enclosing_queue.back() {
+        if let Some(back) = self.enclosing_stack.last() {
             if back == &self.peek() {
-                self.enclosing_queue.pop_back();
+                self.enclosing_stack.pop();
                 self.cursor += 1;
             } else {
                 panic!("Mismatched closing bracket");
@@ -294,9 +292,10 @@ impl Lexer {
         let mut start = self.cursor;
         let string = s.to_string();
         for c in string.chars() {
-            if c == self.input[start] {
+            if self.input.get(start) == Some(&c){
                 start += 1;
-            } else {
+            }
+            else {
                 return false;
             }
         }
@@ -312,46 +311,45 @@ impl Lexer {
     }
 
     fn get_next_token_type(&self) -> JsonType {
-        use JsonType::*;
         match self.peek() {
-            '{' => Object,
-            '[' => Array,
-            '"' => Str,
-            '0' => Number,
-            '1' => Number,
-            '2' => Number,
-            '3' => Number,
-            '4' => Number,
-            '5' => Number,
-            '6' => Number,
-            '7' => Number,
-            '8' => Number,
-            '9' => Number,
+            '{' => JsonType::Object,
+            '[' => JsonType::Array,
+            '"' => JsonType::Str,
+            '0' => JsonType::Number,
+            '1' => JsonType::Number,
+            '2' => JsonType::Number,
+            '3' => JsonType::Number,
+            '4' => JsonType::Number,
+            '5' => JsonType::Number,
+            '6' => JsonType::Number,
+            '7' => JsonType::Number,
+            '8' => JsonType::Number,
+            '9' => JsonType::Number,
             '-' => {
                 if self.input[self.cursor + 1].is_ascii_digit() {
-                    return Number;
+                    return JsonType::Number;
                 }
                 self.print();
                 panic!("`-` is invalid JsonType at: {}", self.cursor)
             }
             '.' => {
                 if self.input[self.cursor + 1].is_ascii_digit() {
-                    return Number;
+                    return JsonType::Number;
                 }
                 self.print();
                 panic!("`.` is invalid JsonType at: {}", self.cursor)
             }
-            't' => Bool,
-            'f' => Bool,
-            'n' => Null,
-            ' ' => Ignore,
-            '\t' => Ignore,
-            '\n' => Ignore,
-            '\r' => Ignore,
-            '}' => Closing,
-            ']' => Closing,
-            ',' => ValueSep,
-            ':' => NameSep,
+            't' => JsonType::Bool,
+            'f' => JsonType::Bool,
+            'n' => JsonType::Null,
+            ' ' => JsonType::Ignore,
+            '\t' => JsonType::Ignore,
+            '\n' => JsonType::Ignore,
+            '\r' => JsonType::Ignore,
+            '}' => JsonType::Closing,
+            ']' => JsonType::Closing,
+            ',' => JsonType::ValueSep,
+            ':' => JsonType::NameSep,
             c => {
                 self.print();
                 panic!("`{c}` is invalid JsonType at: {}", self.cursor)
@@ -375,6 +373,11 @@ mod tests {
     #[test]
     fn parse_null() {
         assert_eq!(Lexer::new("null").parse(), JsonData::Null);
+    }
+    #[test]
+    #[should_panic(expected = "Tried to parse null, but null was not found")]
+    fn parse_not_null() {
+        Lexer::new("nul").parse();
     }
     #[test]
     fn parse_empty_string() {
@@ -402,6 +405,16 @@ mod tests {
     #[test]
     fn parse_bool_false() {
         assert_eq!(Lexer::new("false").parse(), JsonData::Bool(false));
+    }
+    #[test]
+    #[should_panic(expected="Tried to parse bool, but bool was not found")]
+    fn parse_not_bool_true() {
+        Lexer::new("tru").parse();
+    }
+    #[test]
+    #[should_panic(expected="Tried to parse bool, but bool was not found")]
+    fn parse_not_bool_false() {
+        Lexer::new("fals").parse();
     }
     #[test]
     fn parse_empty_array() {
