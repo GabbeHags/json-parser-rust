@@ -324,22 +324,48 @@ mod tests {
         Ok(())
     }
 
-    fn test_eof(token: &Token) -> Result<(), TestCaseError> {
+    fn test_eof(token: &Token) -> Result<(), TestCaseError>{
         test_token_eq(token, TokenKind::Eof, "")
+    }
+
+    fn test_token_eq_std<'a, S: Into<Cow<'a, str>> + std::fmt::Display>(
+        token: &Token,
+        expected_kind: TokenKind,
+        expected_text: S,
+    ){
+        assert_eq!(&expected_kind, &token.kind, "\n{:?}\n", token);
+        assert_eq!(
+            &expected_text.into().to_string(),
+            &token.text,
+            "\n{:?}\n",
+            token
+        );
+    }
+
+    fn test_invalid_std(token: &Token) {
+        assert_eq!(&TokenKind::Invalid, &token.kind, "\n{:?}\n", token);
+    }
+
+    fn test_eof_std(token: &Token) {
+        test_token_eq_std(token, TokenKind::Eof, "")
     }
 
     proptest! {
         #[test]
-        fn random_input_test(ref s in r"\s*\\PC*\s*") {
+        fn random_input_test(ref s in r"\s*\PC*\s*") {
             let lexer = Lexer::new(s.chars());
             for token in lexer {
                 if token.kind == TokenKind::Invalid {
                     break
                 }
+                println!("{token:?}");
                 match token.kind {
                     TokenKind::Str => continue,
                     TokenKind::Integer => {
-                        prop_assert!(token.text.parse::<usize>().unwrap() - token.text.parse::<usize>().unwrap() == 0, "\n{:?}\n", token);
+                        prop_assert!(token.text.parse::<isize>().is_ok(), "\n{:?}\n", token);
+                    }
+                    TokenKind::Float => {
+                        prop_assert!(token.text.parse::<f64>().is_ok(), "\n{:?}\n", token);
                     }
                     TokenKind::Eof => prop_assert_eq!(&"".to_string(), &token.text, "\n{:?}\n", token),
                     TokenKind::OpenCurly => prop_assert_eq!(&"{".to_string(), &token.text, "\n{:?}\n", token),
@@ -495,7 +521,7 @@ mod tests {
         }
 
         // #[test]
-        // fn invalid_null_token(ref s in r"\s*(\w*null|\w*null\w*|null\w*)\s*") {
+        // fn invalid_null_token(ref s in r"\s*(\w+null|\w+null\w+|null\w+)\s*") {
         //     prop_assume!(s.trim() != "null");
         //     let mut lexer = Lexer::new(s.chars());
         //     test_invalid(&lexer.next().unwrap())?;
@@ -527,7 +553,7 @@ mod tests {
         //     // prop_assume!(s.trim() != "false");
         //     let mut lexer = Lexer::new(s.chars());
         //     // test_invalid(&lexer.next().unwrap())?;
-        //     prop_assert_ne!(TokenKind::False, lexer.next().unwrap().kind)?;
+        //     prop_assert_ne!(TokenKind::False, lexer.next().unwrap().kind);
         // }
 
         #[test]
@@ -536,64 +562,72 @@ mod tests {
             test_token_eq(&lexer.next().unwrap(), TokenKind::False, "false")?;
             test_eof(&lexer.next().unwrap())?;
         }
+    }
 
-        #[test]
-        fn valid_float_is_zero(ref s in r"0\.0") {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Float, s)?;
-            test_eof(&lexer.next().unwrap())?;
-        }
 
-        #[test]
-        fn empty_string(ref s in "\"\"") {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Str, s)?;
-            test_eof(&lexer.next().unwrap())?;
-        }
+    #[test]
+    fn valid_float_is_zero() {
+        let s = "0.0";
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Float, s);
+        test_eof_std(&lexer.next().unwrap());
+    }
 
-        #[test]
-        fn backslash_string(ref s in r#""\\""#) {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Invalid, s)?;
-            test_eof(&lexer.next().unwrap())?;
-        }
+    #[test]
+    fn empty_string() {
+        let s = "\"\"";
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Str, s);
+        test_eof_std(&lexer.next().unwrap());
+    }
 
-        #[test]
-        fn escaped_quotation_mark_string(ref s in r#""\\"""#) {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Str, s)?;
-            test_eof(&lexer.next().unwrap())?;
-        }
+    #[test]
+    fn backslash_string() {
+        let s = r#""\""#;
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Invalid, s);
+        test_eof_std(&lexer.next().unwrap());
+    }
 
-        #[test]
-        fn valid_one_integer_elem_array(ref s in r"\[4\]") {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::OpenBracket, "[")?;
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Integer, "4")?;
-            test_token_eq(&lexer.next().unwrap(), TokenKind::CloseBracket, "]")?;
-            test_eof(&lexer.next().unwrap())?;
-        }
+    #[test]
+    fn escaped_quotation_mark_string() {
+        let s = r#""\"""#;
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Str, s);
+        test_eof_std(&lexer.next().unwrap());
+    }
 
-        #[test]
-        fn valid_one_float_elem_array(ref s in r"\[4\.0\]") {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::OpenBracket, "[")?;
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Float, "4.0")?;
-            test_token_eq(&lexer.next().unwrap(), TokenKind::CloseBracket, "]")?;
-            test_eof(&lexer.next().unwrap())?;
-        }
+    #[test]
+    fn valid_one_integer_elem_array() {
+        let s = r"[4]";
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::OpenBracket, "[");
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Integer, "4");
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::CloseBracket, "]");
+        test_eof_std(&lexer.next().unwrap());
+    }
 
-        #[test]
-        fn valid_many_integers_array(ref s in r"\[0, 1, 2, 3, 4, 5, 6, 7, 8, 9\]") {
-            let mut lexer = Lexer::new(s.chars());
-            test_token_eq(&lexer.next().unwrap(), TokenKind::OpenBracket, "[")?;
-            for i in 0..9 {
-                test_token_eq(&lexer.next().unwrap(), TokenKind::Integer, i.to_string())?;
-                test_token_eq(&lexer.next().unwrap(), TokenKind::Comma, ",")?;
-            }
-            test_token_eq(&lexer.next().unwrap(), TokenKind::Integer, "9")?;
-            test_token_eq(&lexer.next().unwrap(), TokenKind::CloseBracket, "]")?;
-            test_eof(&lexer.next().unwrap())?;
+    #[test]
+    fn valid_one_float_elem_array() {
+        let s = r"[4.0]";
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::OpenBracket, "[");
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Float, "4.0");
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::CloseBracket, "]");
+        test_eof_std(&lexer.next().unwrap());
+    }
+
+    #[test]
+    fn valid_many_integers_array() {
+        let s = r"[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]";
+        let mut lexer = Lexer::new(s.chars());
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::OpenBracket, "[");
+        for i in 0..9 {
+            test_token_eq_std(&lexer.next().unwrap(), TokenKind::Integer, i.to_string());
+            test_token_eq_std(&lexer.next().unwrap(), TokenKind::Comma, ",");
         }
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::Integer, "9");
+        test_token_eq_std(&lexer.next().unwrap(), TokenKind::CloseBracket, "]");
+        test_eof_std(&lexer.next().unwrap());
     }
 }

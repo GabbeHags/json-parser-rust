@@ -4,6 +4,13 @@ use crate::lexer::{Lexer, TokenKind};
 use std::collections::HashMap;
 use std::iter::Peekable;
 
+#[derive(PartialEq)]
+enum In {
+    Nothing,
+    Array,
+    Object
+}
+
 #[derive(Debug, PartialEq)]
 enum Json {
     Eof,
@@ -24,10 +31,10 @@ enum JsonErr {
 
 fn parse_json<S: AsRef<str>>(json: S) -> Result<Json, JsonErr> {
     let mut lexer = Lexer::new(json.as_ref().chars()).peekable();
-    eat(&mut lexer)
+    eat(&mut lexer, &In::Nothing)
 }
 
-fn eat(lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>) -> Result<Json, JsonErr> {
+fn eat(lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>, is_in: &In) -> Result<Json, JsonErr> {
     if let Some(token) = lexer.peek() {
         match token.kind {
             TokenKind::CloseBracket => Err(JsonErr::err),
@@ -35,23 +42,24 @@ fn eat(lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>) -> Result<Json, 
             TokenKind::Colon => Err(JsonErr::err),
             TokenKind::CloseCurly => Err(JsonErr::err),
             TokenKind::Invalid => Err(JsonErr::err),
-            TokenKind::OpenCurly => parse_json_object(lexer),
-            TokenKind::OpenBracket => parse_json_array(lexer),
-            TokenKind::Integer => parse_json_integer(lexer),
-            TokenKind::Float => parse_json_float(lexer),
-            TokenKind::Str => parse_json_str(lexer),
-            TokenKind::Null => parse_json_null(lexer),
-            TokenKind::True => parse_json_true(lexer),
-            TokenKind::False => parse_json_false(lexer),
-            TokenKind::Eof => parse_json_eof(lexer),
+            TokenKind::OpenCurly => parse_json_object(lexer, is_in),
+            TokenKind::OpenBracket => parse_json_array(lexer, is_in),
+            TokenKind::Integer => parse_json_integer(lexer, is_in),
+            TokenKind::Float => parse_json_float(lexer, is_in),
+            TokenKind::Str => parse_json_str(lexer, is_in),
+            TokenKind::Null => parse_json_null(lexer, is_in),
+            TokenKind::True => parse_json_true(lexer, is_in),
+            TokenKind::False => parse_json_false(lexer, is_in),
+            TokenKind::Eof => parse_json_eof(lexer, is_in),
         }
     } else {
-        parse_json_eof(lexer)
+        parse_json_eof(lexer, is_in)
     }
 }
 
 fn parse_json_eof(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    _is_in: &In
 ) -> Result<Json, JsonErr> {
     lexer.next();
     Ok(Json::Eof)
@@ -59,40 +67,45 @@ fn parse_json_eof(
 
 fn parse_json_null(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     lexer.next();
-    Ok(Json::Null)
+    is_next_valid(lexer, Json::Null, is_in)
 }
 
 fn parse_json_false(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     lexer.next();
-    Ok(Json::False)
+    is_next_valid(lexer, Json::False, is_in)
 }
 
 fn parse_json_true(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     lexer.next();
-    Ok(Json::True)
+    is_next_valid(lexer, Json::True, is_in)
 }
 
 fn parse_json_str(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     let token = lexer.next().unwrap();
-    Ok(Json::Str(
-        remove_surrounding_quotes(token.text.as_str())
-    ))
+    println!("Current Token: {token:?}");
+    is_next_valid(lexer, Json::Str(remove_surrounding_quotes(token.text.as_str())), is_in)
 }
 
 fn parse_json_float(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     let token = lexer.next().unwrap();
+    println!("Current Token: {token:?}");
     if let Ok(f) = token.text.parse::<f64>() {
-        Ok(Json::Float(f))
+        is_next_valid(lexer, Json::Float(f), is_in)
     } else {
         Err(JsonErr::err)
     }
@@ -100,10 +113,12 @@ fn parse_json_float(
 
 fn parse_json_integer(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     let token = lexer.next().unwrap();
+    println!("Current Token: {token:?}");
     if let Ok(i) = token.text.parse::<i64>() {
-        Ok(Json::Integer(i))
+        is_next_valid(lexer, Json::Integer(i), is_in)
     } else {
         Err(JsonErr::err)
     }
@@ -111,11 +126,13 @@ fn parse_json_integer(
 
 fn parse_json_array(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     lexer.next();
     let mut arr: Vec<Json> = Vec::new();
     let mut elem: Result<Json, JsonErr>;
     while let Some(token) = lexer.peek() {
+        println!("Current Token: {token:?}");
         elem = match token.kind {
             TokenKind::CloseBracket => {
                 lexer.next();
@@ -125,7 +142,7 @@ fn parse_json_array(
                 lexer.next();
                 continue;
             }
-            _ => eat(lexer),
+            _ => eat(lexer, &In::Array),
         };
         if let Ok(e) = elem {
             arr.push(e);
@@ -133,11 +150,12 @@ fn parse_json_array(
             return elem;
         }
     }
-    Ok(Json::Array(arr))
+    is_next_valid(lexer, Json::Array(arr), is_in)
 }
 
 fn parse_json_object(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In
 ) -> Result<Json, JsonErr> {
     lexer.next();
     let mut map: HashMap<String, Json> = HashMap::new();
@@ -145,6 +163,7 @@ fn parse_json_object(
     let mut is_key = true;
     let mut key: String = "".into();
     while let Some(token) = lexer.peek() {
+        println!("Current Token: {token:?}");
         elem = match token.kind {
             TokenKind::CloseCurly => {
                 lexer.next();
@@ -166,10 +185,10 @@ fn parse_json_object(
                     lexer.next();
                     continue;
                 } else {
-                    parse_json_str(lexer)
+                    parse_json_str(lexer, &In::Object)
                 }
             }
-            _ => eat(lexer),
+            _ => eat(lexer, &In::Object),
         };
         if let Ok(e) = elem {
             map.insert(key.to_string(), e);
@@ -177,18 +196,99 @@ fn parse_json_object(
             return elem;
         }
     }
-    Ok(Json::Object(map))
+    is_next_valid(lexer, Json::Object(map), is_in)
 }
 
-/// Removes the surrounding quotes from the string
-fn remove_surrounding_quotes<S: AsRef<str>>(text: S) -> String{
-    text.as_ref()[1..text.as_ref().len()-1].to_string()
+fn is_next_valid(
+    lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    current: Json,
+    is_in: &In
+) -> Result<Json, JsonErr> {
+    if let Some(next_token) = lexer.peek() {
+        println!("Next Token: {next_token:?}");
+        let kind = &next_token.kind;
+        if (kind == &TokenKind::Comma && (is_in == &In::Array || is_in == &In::Object))
+            || (kind == &TokenKind::CloseBracket && is_in == &In::Array)
+            || (kind == &TokenKind::CloseCurly && is_in == &In::Object)
+            || (kind == &TokenKind::Eof && is_in == &In::Nothing)
+        {
+            return Ok(current)
+        }
+    }
+    Err(JsonErr::err)
+}
+
+// Removes the surrounding quotes from the string
+fn remove_surrounding_quotes<S: AsRef<str>>(text: S) -> String {
+    // println!("{:?}", text.as_ref());
+    let text = text.as_ref();
+    if text.find('"') == Some(0) && text.rfind('"') == Some(text.len()-1) && text.len() >= 2{
+        text[1..text.len()-1].to_string()
+    } else {
+        panic!("String was not surrounded with quotes")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn random_input_test(ref s in r"\s*\PC*\s*") {
+            let json = parse_json(s);
+            let s = s.trim();
+            // println!("{s}");
+            if s.is_empty() {
+                prop_assert_eq!(Ok(Json::Eof), json);
+            }
+            else if s.find('\"') == Some(0) && s.rfind('\"') == Some(s.len()-1) && s.len() >= 2 {
+                prop_assume!(
+                    (remove_surrounding_quotes(s).contains('\"') && remove_surrounding_quotes(s).contains(r#"\\""#))
+                    || (!remove_surrounding_quotes(s).contains('\"') && !remove_surrounding_quotes(s).contains(r#"\\""#))
+                );
+                prop_assert_eq!(Ok(Json::Str(remove_surrounding_quotes(s))), json);
+            }
+            else if let Ok(i) =  s.parse::<i64>() {
+                prop_assert_eq!(Ok(Json::Integer(i)), json);
+            }
+            else if let Ok(f) =  s.parse::<f64>() {
+                prop_assert_eq!(Ok(Json::Float(f)), json);
+            }
+            else if s.find('{') == Some(0) && s.rfind('}') == Some(s.len()-1){
+                prop_assume!(s.len() == 2);
+                prop_assert_eq!(Ok(Json::Object(HashMap::new())), json);
+            }
+            else {
+                prop_assert_eq!(Err(JsonErr::err), json);
+            }
+        }
+
+        #[test]
+        fn valid_random_str(ref s in r#"\s*"[^\\"]*"\s*"#) {
+            let json = parse_json(s);
+            prop_assert_eq!(Ok(Json::Str(remove_surrounding_quotes(s.trim()))), json)
+        }
+
+        #[test]
+        fn valid_random_json(ref s in "") {
+
+        }
+    }
+
+    #[test]
+    fn invalid_integer_trailing() {
+        let json = parse_json("0}");
+        assert_eq!(Err(JsonErr::err), json)
+    }
+
+    #[test]
+    fn valid_str_one_escaped_quotation() {
+        let s = r#""\"""#;
+        let json = parse_json(s);
+        assert_eq!(Ok(Json::Str(remove_surrounding_quotes(s))), json);
+    }
 
     #[test]
     fn valid_null() {
