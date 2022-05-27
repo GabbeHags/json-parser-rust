@@ -2,21 +2,22 @@
 
 use crate::lexer::{Lexer, TokenKind};
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Formatter;
 use std::iter::Peekable;
 
 #[derive(PartialEq)]
 enum In {
     Nothing,
     Array,
-    Object
+    Object,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Json {
     Eof,
     Null,
-    True,
-    False,
+    Bool(bool),
     Str(String),
     Float(f64),
     Integer(i64),
@@ -29,12 +30,54 @@ enum JsonErr {
     err,
 }
 
+impl fmt::Display for Json {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Json::Eof => write!(f, ""),
+            Json::Null => write!(f, "null"),
+            Json::Bool(b) => write!(f, "{b}"),
+            Json::Str(s) => write!(f, "\"{s}\""),
+            Json::Float(float) => write!(f, "{float}"),
+            Json::Integer(i) => write!(f, "{i}"),
+            Json::Array(v) => {
+                if v.is_empty() {
+                    write!(f, "[]")
+                } else {
+                    write!(f, "[").expect("THIS SHOULD NEVER PANIC");
+                    for i in 0..v.len() - 1 {
+                        write!(f, "{}, ", v[i]).expect("THIS SHOULD NEVER PANIC");
+                    }
+                    write!(f, "{}]", v[v.len() - 1])
+                }
+            }
+            Json::Object(m) => {
+                if m.is_empty() {
+                    write!(f, "{{}}")
+                } else {
+                    writeln!(f, "{{").expect("THIS SHOULD NEVER PANIC");
+                    for (count, (s, j)) in m.iter().enumerate() {
+                        if m.len() - 1 == count {
+                            return write!(f, "\"{s}\" : {j}\n}}");
+                        } else {
+                            writeln!(f, "\"{s}\" : {j},").expect("THIS SHOULD NEVER PANIC");
+                        }
+                    }
+                    unreachable!();
+                }
+            }
+        }
+    }
+}
+
 fn parse_json<S: AsRef<str>>(json: S) -> Result<Json, JsonErr> {
     let mut lexer = Lexer::new(json.as_ref().chars()).peekable();
     eat(&mut lexer, &In::Nothing)
 }
 
-fn eat(lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>, is_in: &In) -> Result<Json, JsonErr> {
+fn eat(
+    lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
+    is_in: &In,
+) -> Result<Json, JsonErr> {
     if let Some(token) = lexer.peek() {
         match token.kind {
             TokenKind::CloseBracket => Err(JsonErr::err),
@@ -59,7 +102,7 @@ fn eat(lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>, is_in: &In) -> R
 
 fn parse_json_eof(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    _is_in: &In
+    _is_in: &In,
 ) -> Result<Json, JsonErr> {
     lexer.next();
     Ok(Json::Eof)
@@ -67,7 +110,7 @@ fn parse_json_eof(
 
 fn parse_json_null(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     lexer.next();
     is_next_valid(lexer, Json::Null, is_in)
@@ -75,35 +118,39 @@ fn parse_json_null(
 
 fn parse_json_false(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     lexer.next();
-    is_next_valid(lexer, Json::False, is_in)
+    is_next_valid(lexer, Json::Bool(false), is_in)
 }
 
 fn parse_json_true(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     lexer.next();
-    is_next_valid(lexer, Json::True, is_in)
+    is_next_valid(lexer, Json::Bool(true), is_in)
 }
 
 fn parse_json_str(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     let token = lexer.next().unwrap();
-    println!("Current Token: {token:?}");
-    is_next_valid(lexer, Json::Str(remove_surrounding_quotes(token.text.as_str())), is_in)
+    // println!("Current Token: {token:?}");
+    is_next_valid(
+        lexer,
+        Json::Str(remove_surrounding_quotes(token.text.as_str())),
+        is_in,
+    )
 }
 
 fn parse_json_float(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     let token = lexer.next().unwrap();
-    println!("Current Token: {token:?}");
+    // println!("Current Token: {token:?}");
     if let Ok(f) = token.text.parse::<f64>() {
         is_next_valid(lexer, Json::Float(f), is_in)
     } else {
@@ -113,10 +160,10 @@ fn parse_json_float(
 
 fn parse_json_integer(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     let token = lexer.next().unwrap();
-    println!("Current Token: {token:?}");
+    // println!("Current Token: {token:?}");
     if let Ok(i) = token.text.parse::<i64>() {
         is_next_valid(lexer, Json::Integer(i), is_in)
     } else {
@@ -126,13 +173,13 @@ fn parse_json_integer(
 
 fn parse_json_array(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     lexer.next();
     let mut arr: Vec<Json> = Vec::new();
     let mut elem: Result<Json, JsonErr>;
     while let Some(token) = lexer.peek() {
-        println!("Current Token: {token:?}");
+        // println!("Current Token: {token:?}");
         elem = match token.kind {
             TokenKind::CloseBracket => {
                 lexer.next();
@@ -155,7 +202,7 @@ fn parse_json_array(
 
 fn parse_json_object(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     lexer.next();
     let mut map: HashMap<String, Json> = HashMap::new();
@@ -163,7 +210,7 @@ fn parse_json_object(
     let mut is_key = true;
     let mut key: String = "".into();
     while let Some(token) = lexer.peek() {
-        println!("Current Token: {token:?}");
+        // println!("Current Token: {token:?}");
         elem = match token.kind {
             TokenKind::CloseCurly => {
                 lexer.next();
@@ -181,7 +228,7 @@ fn parse_json_object(
             }
             TokenKind::Str => {
                 if is_key {
-                    key =  remove_surrounding_quotes(token.text.as_str());
+                    key = remove_surrounding_quotes(token.text.as_str());
                     lexer.next();
                     continue;
                 } else {
@@ -202,17 +249,17 @@ fn parse_json_object(
 fn is_next_valid(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     current: Json,
-    is_in: &In
+    is_in: &In,
 ) -> Result<Json, JsonErr> {
     if let Some(next_token) = lexer.peek() {
-        println!("Next Token: {next_token:?}");
+        // println!("Next Token: {next_token:?}");
         let kind = &next_token.kind;
         if (kind == &TokenKind::Comma && (is_in == &In::Array || is_in == &In::Object))
             || (kind == &TokenKind::CloseBracket && is_in == &In::Array)
             || (kind == &TokenKind::CloseCurly && is_in == &In::Object)
             || (kind == &TokenKind::Eof && is_in == &In::Nothing)
         {
-            return Ok(current)
+            return Ok(current);
         }
     }
     Err(JsonErr::err)
@@ -222,17 +269,34 @@ fn is_next_valid(
 fn remove_surrounding_quotes<S: AsRef<str>>(text: S) -> String {
     // println!("{:?}", text.as_ref());
     let text = text.as_ref();
-    if text.find('"') == Some(0) && text.rfind('"') == Some(text.len()-1) && text.len() >= 2{
-        text[1..text.len()-1].to_string()
-    } else {
-        panic!("String was not surrounded with quotes")
-    }
+    debug_assert!(
+        text.find('"') == Some(0) && text.rfind('"') == Some(text.len() - 1) && text.len() >= 2,
+        "String was not surrounded with quotes, THIS SHOULD ALWAYS BE TRUE"
+    );
+    text[1..text.len() - 1].to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    fn arb_json() -> impl Strategy<Value = Json> {
+        // https://altsysrq.github.io/proptest-book/proptest/tutorial/recursive.html
+        let leaf = prop_oneof![
+            Just(Json::Null),
+            any::<bool>().prop_map(Json::Bool),
+            any::<i64>().prop_map(Json::Integer),
+            (-1000.0..1000.0).prop_map(Json::Float),
+            r#"[^\\"]*"#.prop_map(Json::Str)
+        ];
+        leaf.prop_recursive(4, 128, 10, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..12).prop_map(Json::Array),
+                prop::collection::hash_map(r#"[^\\"]*"#, inner, 0..12).prop_map(Json::Object),
+            ]
+        })
+    }
 
     proptest! {
         #[test]
@@ -268,17 +332,19 @@ mod tests {
         #[test]
         fn valid_random_str(ref s in r#"\s*"[^\\"]*"\s*"#) {
             let json = parse_json(s);
-            prop_assert_eq!(Ok(Json::Str(remove_surrounding_quotes(s.trim()))), json)
+            let s = s.trim();
+            prop_assert_eq!(Ok(Json::Str(remove_surrounding_quotes(s))), json)
         }
 
         #[test]
-        fn valid_random_json(ref s in "") {
-
+        fn valid_random_json(ref s in arb_json()) {
+            let json = parse_json(s.to_string()).unwrap();
+            prop_assert_eq!(s, &json);
         }
     }
 
     #[test]
-    fn invalid_integer_trailing() {
+    fn invalid_integer_trailing_closed_curly() {
         let json = parse_json("0}");
         assert_eq!(Err(JsonErr::err), json)
     }
@@ -299,13 +365,13 @@ mod tests {
     #[test]
     fn valid_true() {
         let json = parse_json("true");
-        assert_eq!(Ok(Json::True), json);
+        assert_eq!(Ok(Json::Bool(true)), json);
     }
 
     #[test]
     fn valid_false() {
         let json = parse_json("false");
-        assert_eq!(Ok(Json::False), json);
+        assert_eq!(Ok(Json::Bool(false)), json);
     }
 
     #[test]
@@ -359,6 +425,7 @@ mod tests {
     #[test]
     fn valid_array() {
         let json = parse_json("[\"t\", \"e\", \"s\", \"t\", 1, 2, 3, 4]");
+        // println!("{}", json.as_ref().unwrap());
         assert_eq!(
             Ok(Json::Array(vec![
                 Json::Str("t".into()),
@@ -408,40 +475,44 @@ mod tests {
     }
 
     fn parse_array_of_all_non_recursive_types() {
+        let json = parse_json("[null, \"hej\", 1337, 1337.0, true, false]");
+        // println!("{}", json.as_ref().unwrap());
         assert_eq!(
             Ok(Json::Array(vec![
                 Json::Null,
                 Json::Str(String::from("hej")),
                 Json::Integer(1337),
                 Json::Float(1337.0),
-                Json::True,
-                Json::False
+                Json::Bool(true),
+                Json::Bool(false)
             ])),
-            parse_json("[null, \"hej\", 1337, 1337.0, true, false]")
+            json
         );
     }
 
     #[test]
     fn parse_array_with_array_in_array() {
+        let json = parse_json(
+            "[null, \"hej\", 1337, 1337.0, true, false, [null, \"hej\", 1337, true, false]]",
+        );
+        // println!("{}", json.as_ref().unwrap());
         assert_eq!(
             Ok(Json::Array(vec![
                 Json::Null,
                 Json::Str(String::from("hej")),
                 Json::Integer(1337),
                 Json::Float(1337.0),
-                Json::True,
-                Json::False,
+                Json::Bool(true),
+                Json::Bool(false),
                 Json::Array(vec![
                     Json::Null,
                     Json::Str(String::from("hej")),
                     Json::Integer(1337),
-                    Json::True,
-                    Json::False,
+                    Json::Bool(true),
+                    Json::Bool(false),
                 ])
             ])),
-            parse_json(
-                "[null, \"hej\", 1337, 1337.0, true, false, [null, \"hej\", 1337, true, false]]"
-            )
+            json
         );
     }
 
@@ -482,8 +553,8 @@ mod tests {
                 h.insert(String::from("null"), Json::Null);
                 h.insert(String::from("integer"), Json::Integer(1337));
                 h.insert(String::from("float"), Json::Float(1337.0));
-                h.insert(String::from("true"), Json::True);
-                h.insert(String::from("false"), Json::False);
+                h.insert(String::from("true"), Json::Bool(true));
+                h.insert(String::from("false"), Json::Bool(false));
                 h.insert(String::from("arr1"), Json::Array(vec![]));
                 h.insert(
                     String::from("arr2"),
@@ -491,8 +562,8 @@ mod tests {
                         Json::Null,
                         Json::Str(String::from("hej")),
                         Json::Integer(1337),
-                        Json::True,
-                        Json::False,
+                        Json::Bool(true),
+                        Json::Bool(false),
                     ]),
                 );
                 h.insert(
@@ -501,14 +572,14 @@ mod tests {
                         Json::Null,
                         Json::Str(String::from("hej")),
                         Json::Integer(1337),
-                        Json::True,
-                        Json::False,
+                        Json::Bool(true),
+                        Json::Bool(false),
                         Json::Array(vec![
                             Json::Null,
                             Json::Str(String::from("hej")),
                             Json::Integer(1337),
-                            Json::True,
-                            Json::False,
+                            Json::Bool(true),
+                            Json::Bool(false),
                         ]),
                     ]),
                 );

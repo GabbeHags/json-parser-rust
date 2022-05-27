@@ -221,53 +221,93 @@ impl<Chars: Iterator<Item = char>> Lexer<Chars> {
 
     fn get_number_token(&mut self) -> Token {
         let mut text = String::new();
-        let mut is_float = false;
-
-        if let Some(c) = self.chars.next_if(|c| c == &'-') {
+        let mut is_e_used = false;
+        let mut is_dot_used = false;
+        let mut plus_count = 0;
+        let mut minus_count = 0;
+        while let Some(c) = self
+            .chars
+            .next_if(|c| c.is_ascii_digit() || c == &'+' || c == &'-' || c == &'.' || c == &'e')
+        {
             self.col += 1;
             text.push(c);
-            if let Some(c) = self.chars.peek() {
-                if !c.is_ascii_digit() {
-                    return Token {
-                        kind: TokenKind::Invalid,
-                        text,
-                        loc: self.get_loc(),
-                    };
+            match c {
+                'e' => {
+                    if is_e_used {
+                        return Token {
+                            kind: TokenKind::Invalid,
+                            text,
+                            loc: self.get_loc(),
+                        };
+                    }
+                    is_e_used = true;
                 }
-            } else {
-                return Token {
-                    kind: TokenKind::Invalid,
-                    text,
-                    loc: self.get_loc(),
-                };
+                '+' => {
+                    if plus_count > 2 {
+                        return Token {
+                            kind: TokenKind::Invalid,
+                            text,
+                            loc: self.get_loc(),
+                        };
+                    }
+                    plus_count += 1;
+                }
+                '-' => {
+                    if minus_count > 2 {
+                        return Token {
+                            kind: TokenKind::Invalid,
+                            text,
+                            loc: self.get_loc(),
+                        };
+                    }
+                    minus_count += 1;
+                }
+                '.' => {
+                    if is_dot_used {
+                        return Token {
+                            kind: TokenKind::Invalid,
+                            text,
+                            loc: self.get_loc(),
+                        };
+                    }
+                    is_dot_used = true;
+                    if let Some(nc) = self.chars.peek() {
+                        if !nc.is_ascii_digit() {
+                            return Token {
+                                kind: TokenKind::Invalid,
+                                text,
+                                loc: self.get_loc(),
+                            };
+                        }
+                    } else {
+                        return Token {
+                            kind: TokenKind::Invalid,
+                            text,
+                            loc: self.get_loc(),
+                        };
+                    }
+                }
+                _ => {}
             }
         }
-        while let Some(c) = self.chars.next_if(|c| c.is_ascii_digit() || c == &'.') {
-            self.col += 1;
-            text.push(c);
-            if c == '.' && !is_float {
-                if let Some(c) = self.chars.next_if(|c| c.is_ascii_digit()) {
-                    text.push(c);
-                } else {
-                    return Token {
-                        kind: TokenKind::Invalid,
-                        text,
-                        loc: self.get_loc(),
-                    };
-                }
-                is_float = true;
+        if text.parse::<i64>().is_ok() {
+            Token {
+                kind: TokenKind::Integer,
+                text,
+                loc: self.get_loc(),
             }
-        }
-        Token {
-            kind: {
-                if is_float {
-                    TokenKind::Float
-                } else {
-                    TokenKind::Integer
-                }
-            },
-            text,
-            loc: self.get_loc(),
+        } else if text.parse::<f64>().is_ok() {
+            Token {
+                kind: TokenKind::Float,
+                text,
+                loc: self.get_loc(),
+            }
+        } else {
+            Token {
+                kind: TokenKind::Invalid,
+                text,
+                loc: self.get_loc(),
+            }
         }
     }
 
@@ -324,7 +364,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_eof(token: &Token) -> Result<(), TestCaseError>{
+    fn test_eof(token: &Token) -> Result<(), TestCaseError> {
         test_token_eq(token, TokenKind::Eof, "")
     }
 
@@ -332,7 +372,7 @@ mod tests {
         token: &Token,
         expected_kind: TokenKind,
         expected_text: S,
-    ){
+    ) {
         assert_eq!(&expected_kind, &token.kind, "\n{:?}\n", token);
         assert_eq!(
             &expected_text.into().to_string(),
@@ -358,7 +398,6 @@ mod tests {
                 if token.kind == TokenKind::Invalid {
                     break
                 }
-                println!("{token:?}");
                 match token.kind {
                     TokenKind::Str => continue,
                     TokenKind::Integer => {
@@ -454,6 +493,33 @@ mod tests {
         }
 
         #[test]
+        fn valid_float_sientific_notation(ref s in ((-10.0f32..10.0), (-10i8..0))
+            .prop_map(|(l, r)| l.to_string() + "e" + &r.to_string()))
+        {
+            let mut lexer = Lexer::new(s.chars());
+            test_token_eq(&lexer.next().unwrap(), TokenKind::Float, s)?;
+            test_eof(&lexer.next().unwrap())?;
+        }
+
+        #[test]
+        fn valid_float_sientific_notation_with_integer(ref s in ((-10i8..10), (-10i8..0))
+            .prop_map(|(l, r)| l.to_string() + "e" + &r.to_string()))
+        {
+            let mut lexer = Lexer::new(s.chars());
+            test_token_eq(&lexer.next().unwrap(), TokenKind::Float, s)?;
+            test_eof(&lexer.next().unwrap())?;
+        }
+
+        #[test]
+        fn valid_posetive_float_sientific_notation(ref s in ((1i8..10), (1i8..10))
+            .prop_map(|(l, r)| l.to_string() + "e" + &r.to_string()))
+        {
+            let mut lexer = Lexer::new(s.chars());
+            test_token_eq(&lexer.next().unwrap(), TokenKind::Float, s)?;
+            test_eof(&lexer.next().unwrap())?;
+        }
+
+        #[test]
         fn punctuation_with_number_after(ref s in (any::<u32>()
             .prop_map(|s| s.to_string()), r"\s*", r"\s*")
             .prop_map(|(d, ws1, ws2)| ws1 + "." + d.as_str() + ws2.as_str()))
@@ -520,26 +586,12 @@ mod tests {
             test_eof(&lexer.next().unwrap())?;
         }
 
-        // #[test]
-        // fn invalid_null_token(ref s in r"\s*(\w+null|\w+null\w+|null\w+)\s*") {
-        //     prop_assume!(s.trim() != "null");
-        //     let mut lexer = Lexer::new(s.chars());
-        //     test_invalid(&lexer.next().unwrap())?;
-        // }
-
         #[test]
         fn valid_null_token(ref s in r"\s*null\s*") {
             let mut lexer = Lexer::new(s.chars());
             test_token_eq(&lexer.next().unwrap(), TokenKind::Null, "null")?;
             test_eof(&lexer.next().unwrap())?;
         }
-
-        // #[test]
-        // fn invalid_true_token(ref s in r"\s*(\w+true|\w+true\w+|true\w+)\s*") {
-        //     // prop_assume!(s.trim() != "true");
-        //     let mut lexer = Lexer::new(s.chars());
-        //     test_invalid(&lexer.next().unwrap())?;
-        // }
 
         #[test]
         fn valid_true_token(ref s in r"\s*true\s*") {
@@ -548,14 +600,6 @@ mod tests {
             test_eof(&lexer.next().unwrap())?;
         }
 
-        // #[test]
-        // fn invalid_false_token(ref s in r"\s*(\w+false|\w+false\w+|false\w+)\s*") {
-        //     // prop_assume!(s.trim() != "false");
-        //     let mut lexer = Lexer::new(s.chars());
-        //     // test_invalid(&lexer.next().unwrap())?;
-        //     prop_assert_ne!(TokenKind::False, lexer.next().unwrap().kind);
-        // }
-
         #[test]
         fn valid_false_token(ref s in r"\s*false\s*") {
             let mut lexer = Lexer::new(s.chars());
@@ -563,7 +607,6 @@ mod tests {
             test_eof(&lexer.next().unwrap())?;
         }
     }
-
 
     #[test]
     fn valid_float_is_zero() {
