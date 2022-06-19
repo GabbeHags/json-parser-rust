@@ -3,7 +3,7 @@
 use std::iter::Peekable;
 
 #[derive(Debug, PartialEq)]
-pub enum TokenKind {
+pub(crate) enum TokenKind {
     OpenCurly,
     CloseCurly,
     OpenBracket,
@@ -21,20 +21,20 @@ pub enum TokenKind {
 }
 
 #[derive(Debug)]
-pub struct Loc {
+pub(crate) struct Loc {
     col: usize,
     row: usize,
 }
 
 #[derive(Debug)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub text: String,
-    pub loc: Loc,
+pub(crate) struct Token {
+    pub(crate) kind: TokenKind,
+    pub(crate) text: String,
+    pub(crate) loc: Loc,
 }
 
 #[derive(Debug)]
-pub struct Lexer<Chars: Iterator<Item = char>> {
+pub(crate) struct Lexer<Chars: Iterator<Item = char>> {
     chars: Peekable<Chars>,
     exhausted: bool,
     col: usize,
@@ -43,7 +43,7 @@ pub struct Lexer<Chars: Iterator<Item = char>> {
 }
 
 impl<Chars: Iterator<Item = char>> Lexer<Chars> {
-    pub fn new(chars: Chars) -> Self {
+    pub(crate) fn new(chars: Chars) -> Self {
         Self {
             chars: chars.peekable(),
             exhausted: false,
