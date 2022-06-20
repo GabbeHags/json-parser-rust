@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::lexer::{Lexer, TokenKind};
+use crate::lexer::{Lexer, Token, TokenKind};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
@@ -25,9 +25,34 @@ pub(crate) enum JsonData {
     Object(HashMap<String, JsonData>),
 }
 
-#[derive(Debug, PartialEq)]
-pub(crate) enum JsonErr {
-    err, // TODO: add more errors
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) enum ParseError {
+    SyntaxError(Token),
+    UnexpectedEof,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::SyntaxError(token) => {
+                let msg = "Invalid Json Syntax";
+                write!(
+                    f,
+                    "{} `{}` at {}:{}\n{}{}",
+                    msg,
+                    token.text,
+                    token.loc.row,
+                    token.loc.col,
+                    " ".repeat(msg.len() + 2),
+                    "^".repeat(token.text.len())
+                )
+            }
+            ParseError::UnexpectedEof => {
+                write!(f, "Unexpected end of file")
+            }
+        }
+    }
 }
 
 impl fmt::Display for JsonData {
@@ -69,7 +94,7 @@ impl fmt::Display for JsonData {
     }
 }
 
-pub(crate) fn parse_json<S: AsRef<str>>(json: S) -> Result<JsonData, JsonErr> {
+pub(crate) fn parse_json<S: AsRef<str>>(json: S) -> Result<JsonData, ParseError> {
     let mut lexer = Lexer::new(json.as_ref().chars()).peekable();
     eat(&mut lexer, &In::Nothing)
 }
@@ -77,15 +102,15 @@ pub(crate) fn parse_json<S: AsRef<str>>(json: S) -> Result<JsonData, JsonErr> {
 fn eat(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     if let Some(token) = lexer.peek() {
         // println!("{token:?}");
         match token.kind {
-            TokenKind::CloseBracket => Err(JsonErr::err),
-            TokenKind::Comma => Err(JsonErr::err),
-            TokenKind::Colon => Err(JsonErr::err),
-            TokenKind::CloseCurly => Err(JsonErr::err),
-            TokenKind::Invalid => Err(JsonErr::err),
+            TokenKind::CloseBracket => Err(ParseError::SyntaxError(token.to_owned())),
+            TokenKind::Comma => Err(ParseError::SyntaxError(token.to_owned())),
+            TokenKind::Colon => Err(ParseError::SyntaxError(token.to_owned())),
+            TokenKind::CloseCurly => Err(ParseError::SyntaxError(token.to_owned())),
+            TokenKind::Invalid => Err(ParseError::SyntaxError(token.to_owned())),
             TokenKind::OpenCurly => parse_json_object(lexer, is_in),
             TokenKind::OpenBracket => parse_json_array(lexer, is_in),
             TokenKind::Integer => parse_json_integer(lexer, is_in),
@@ -104,7 +129,7 @@ fn eat(
 fn parse_json_eof(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     _is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     lexer.next();
     Ok(JsonData::Eof)
 }
@@ -112,7 +137,7 @@ fn parse_json_eof(
 fn parse_json_null(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     lexer.next();
     is_next_valid(lexer, JsonData::Null, is_in)
 }
@@ -120,7 +145,7 @@ fn parse_json_null(
 fn parse_json_false(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     lexer.next();
     is_next_valid(lexer, JsonData::Bool(false), is_in)
 }
@@ -128,7 +153,7 @@ fn parse_json_false(
 fn parse_json_true(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     lexer.next();
     is_next_valid(lexer, JsonData::Bool(true), is_in)
 }
@@ -136,7 +161,7 @@ fn parse_json_true(
 fn parse_json_str(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     let token = lexer.next().unwrap();
     // println!("Current Token: {token:?}");
     is_next_valid(
@@ -149,36 +174,41 @@ fn parse_json_str(
 fn parse_json_float(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     let token = lexer.next().unwrap();
     // println!("Current Token: {token:?}");
     if let Ok(f) = token.text.parse::<f64>() {
         is_next_valid(lexer, JsonData::Float(f), is_in)
     } else {
-        Err(JsonErr::err)
+        Err(ParseError::SyntaxError(token))
     }
 }
 
 fn parse_json_integer(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     let token = lexer.next().unwrap();
     // println!("Current Token: {token:?}");
     if let Ok(i) = token.text.parse::<i64>() {
-        is_next_valid(lexer, JsonData::Integer(i), is_in)
+        let next = is_next_valid(lexer, JsonData::Integer(i), is_in);
+        if next.is_err() {
+            Err(ParseError::SyntaxError(token))
+        } else {
+            next
+        }
     } else {
-        Err(JsonErr::err)
+        Err(ParseError::SyntaxError(token))
     }
 }
 
 fn parse_json_array(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     lexer.next();
     let mut arr: Vec<JsonData> = Vec::new();
-    let mut elem: Result<JsonData, JsonErr>;
+    let mut elem: Result<JsonData, ParseError>;
     while let Some(token) = lexer.peek() {
         // println!("Current Token: {token:?}");
         elem = match token.kind {
@@ -204,10 +234,10 @@ fn parse_json_array(
 fn parse_json_object(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     lexer.next();
     let mut map: HashMap<String, JsonData> = HashMap::new();
-    let mut elem: Result<JsonData, JsonErr>;
+    let mut elem: Result<JsonData, ParseError>;
     let mut is_key = true;
     let mut key: String = "".into();
     while let Some(token) = lexer.peek() {
@@ -218,13 +248,19 @@ fn parse_json_object(
                 break;
             }
             TokenKind::Comma => {
-                lexer.next();
+                if is_key {
+                    return Err(ParseError::SyntaxError(token.to_owned()));
+                }
                 is_key = true;
+                lexer.next();
                 continue;
             }
             TokenKind::Colon => {
-                lexer.next();
+                if !is_key {
+                    return Err(ParseError::SyntaxError(token.to_owned()));
+                }
                 is_key = false;
+                lexer.next();
                 continue;
             }
             TokenKind::Str => {
@@ -236,7 +272,13 @@ fn parse_json_object(
                     parse_json_str(lexer, &In::Object)
                 }
             }
-            _ => eat(lexer, &In::Object),
+            _ => {
+                if is_key {
+                    Err(ParseError::SyntaxError(token.to_owned()))
+                } else {
+                    eat(lexer, &In::Object)
+                }
+            }
         };
         if let Ok(e) = elem {
             map.insert(key.to_string(), e);
@@ -251,19 +293,21 @@ fn is_next_valid(
     lexer: &mut Peekable<Lexer<impl Iterator<Item = char>>>,
     current: JsonData,
     is_in: &In,
-) -> Result<JsonData, JsonErr> {
+) -> Result<JsonData, ParseError> {
     if let Some(next_token) = lexer.peek() {
         // println!("Next Token: {next_token:?}");
         let kind = &next_token.kind;
-        if (kind == &TokenKind::Comma && (is_in == &In::Array || is_in == &In::Object))
+        return if (kind == &TokenKind::Comma && (is_in == &In::Array || is_in == &In::Object))
             || (kind == &TokenKind::CloseBracket && is_in == &In::Array)
             || (kind == &TokenKind::CloseCurly && is_in == &In::Object)
             || (kind == &TokenKind::Eof && is_in == &In::Nothing)
         {
-            return Ok(current);
-        }
+            Ok(current)
+        } else {
+            Err(ParseError::SyntaxError(next_token.to_owned()))
+        };
     }
-    Err(JsonErr::err)
+    Err(ParseError::UnexpectedEof)
 }
 
 // Removes the surrounding quotes from the string
@@ -282,7 +326,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn arb_json() -> impl Strategy<Value =JsonData> {
+    fn arb_json() -> impl Strategy<Value = JsonData> {
         // https://altsysrq.github.io/proptest-book/proptest/tutorial/recursive.html
         let leaf = prop_oneof![
             Just(JsonData::Null),
@@ -316,16 +360,17 @@ mod tests {
                 prop_assert_eq!(Ok(JsonData::Str(remove_surrounding_quotes(s))), json);
             }
             else if let Ok(i) =  s.parse::<i64>() {
-                prop_assume!(!(s.starts_with('+') || s.starts_with('.')));
-                if !(s.starts_with('+') || s.starts_with('.')) {
-                    prop_assert_eq!(Err(JsonErr::err), json);
+                if s.starts_with('+') || s.starts_with('.') {
+                    prop_assert!(json.is_err());
+                    // prop_assert_eq!(Err(JsonErr::Err(_)), json);
                 } else {
                     prop_assert_eq!(Ok(JsonData::Integer(i)), json);
                 }
             }
             else if let Ok(f) =  s.parse::<f64>() {
-                if s.ends_with('.') || (!(s.starts_with('+') || s.starts_with('.'))){
-                    prop_assert_eq!(Err(JsonErr::err), json);
+                if s.ends_with('.') || s.starts_with('+') || s.starts_with('.'){
+                    prop_assert!(json.is_err());
+                    // prop_assert_eq!(Err(JsonErr::Err), json);
                 } else {
                     prop_assert_eq!(Ok(JsonData::Float(f)), json);
                 }
@@ -335,7 +380,8 @@ mod tests {
                 prop_assert_eq!(Ok(JsonData::Object(HashMap::new())), json);
             }
             else {
-                prop_assert_eq!(Err(JsonErr::err), json);
+                prop_assert!(json.is_err());
+                // prop_assert_eq!(Err(JsonErr::Err), json);
             }
         }
 
@@ -354,9 +400,13 @@ mod tests {
     }
 
     #[test]
+    fn invalid_object_comma() {
+        assert!(parse_json("{,").is_err())
+    }
+
+    #[test]
     fn invalid_integer_trailing_closed_curly() {
-        let json = parse_json("0}");
-        assert_eq!(Err(JsonErr::err), json)
+        assert!(parse_json("0}").is_err());
     }
 
     #[test]
@@ -449,6 +499,12 @@ mod tests {
             ])),
             json
         );
+    }
+
+    #[test]
+    fn invalid_object_no_colon() {
+        let json = parse_json("{\"hej\"123}");
+        assert!(json.is_err())
     }
 
     #[test]
@@ -558,7 +614,10 @@ mod tests {
         assert_eq!(
             Ok(JsonData::Object({
                 let mut h = HashMap::new();
-                h.insert(String::from("string1"), JsonData::Str(String::from("string1")));
+                h.insert(
+                    String::from("string1"),
+                    JsonData::Str(String::from("string1")),
+                );
                 h.insert(String::from("string2"), JsonData::Str(String::from("")));
                 h.insert(String::from("null"), JsonData::Null);
                 h.insert(String::from("integer"), JsonData::Integer(1337));

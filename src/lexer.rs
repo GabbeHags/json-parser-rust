@@ -2,7 +2,7 @@
 
 use std::iter::Peekable;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum TokenKind {
     OpenCurly,
     CloseCurly,
@@ -20,13 +20,15 @@ pub(crate) enum TokenKind {
     Invalid,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct Loc {
-    col: usize,
-    row: usize,
+    pub(crate) col: usize,
+    pub(crate) row: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) text: String,
